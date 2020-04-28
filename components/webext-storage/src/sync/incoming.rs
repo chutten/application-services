@@ -280,7 +280,6 @@ pub fn apply_actions(
         signal.err_if_interrupted()?;
 
         log::trace!("action for '{}': {:?}", item.ext_id, action);
-        // XXX - change counter should be updated consistently here!
         match action {
             IncomingAction::DeleteLocally => {
                 // Can just nuke it entirely.
@@ -295,7 +294,7 @@ pub fn apply_actions(
                     "UPDATE storage_sync_data SET data = :data, sync_change_counter = 0 WHERE ext_id = :ext_id",
                     &[
                         (":ext_id", &item.ext_id),
-                        (":data", &serde_json::Value::Object(data).as_str()),
+                        (":data", &serde_json::Value::Object(data).to_string()),
                     ]
                 )?;
             }
@@ -508,5 +507,142 @@ mod tests {
         Ok(())
     }
 
-    // XXX - test apply_actions!
+    // apply_action tests.
+    #[derive(Debug, PartialEq)]
+    struct LocalItem {
+        data: DataState,
+        sync_change_counter: i32,
+    }
+
+    fn get_local_item(conn: &Connection) -> Option<LocalItem> {
+        conn.try_query_row::<_, Error, _>(
+            "SELECT data, sync_change_counter FROM storage_sync_data WHERE ext_id = 'ext_id'",
+            &[],
+            |row| {
+                let data = json_map_from_row(row, "data")?;
+                let sync_change_counter = row.get::<_, i32>(1)?;
+                Ok(LocalItem {
+                    data,
+                    sync_change_counter,
+                })
+            },
+            true,
+        )
+        .expect("query should work")
+    }
+
+    fn do_apply_action(tx: &Transaction<'_>, action: IncomingAction) {
+        let item = IncomingItem {
+            guid: SyncGuid::new("guid"),
+            ext_id: "ext_id".into(),
+        };
+        apply_actions(tx, vec![(item, action)], &NeverInterrupts).expect("should apply");
+    }
+
+    #[test]
+    fn test_apply_actions() -> Result<()> {
+        let db = new_syncable_mem_db();
+        let mut conn = db.writer.lock().unwrap();
+
+        // DeleteLocally - row should be entirely removed.
+        let tx = conn.transaction().expect("transaction should work");
+        api::set(&tx, "ext_id", json!({"foo": "local"}))?;
+        assert_eq!(
+            api::get(&tx, "ext_id", json!(null))?,
+            json!({"foo": "local"})
+        );
+        do_apply_action(&tx, IncomingAction::DeleteLocally);
+        assert_eq!(api::get(&tx, "ext_id", json!(null))?, json!({}));
+        // and there should not be a local record at all.
+        assert!(get_local_item(&tx).is_none());
+        tx.rollback()?;
+
+        // TakeRemote - replace local data with remote and marked as not dirty.
+        let tx = conn.transaction().expect("transaction should work");
+        api::set(&tx, "ext_id", json!({"foo": "local"}))?;
+        assert_eq!(
+            api::get(&tx, "ext_id", json!(null))?,
+            json!({"foo": "local"})
+        );
+        // data should exist locally with a change recorded.
+        assert_eq!(
+            get_local_item(&tx),
+            Some(LocalItem {
+                data: DataState::Exists(map!({"foo": "local"})),
+                sync_change_counter: 1
+            })
+        );
+        do_apply_action(
+            &tx,
+            IncomingAction::TakeRemote {
+                data: map!({"foo": "remote"}),
+            },
+        );
+        // data should exist locally with the remote data and not be dirty.
+        assert_eq!(
+            get_local_item(&tx),
+            Some(LocalItem {
+                data: DataState::Exists(map!({"foo": "remote"})),
+                sync_change_counter: 0
+            })
+        );
+        tx.rollback()?;
+
+        // Merge - like ::TakeRemote, but data remains dirty.
+        let tx = conn.transaction().expect("transaction should work");
+        api::set(&tx, "ext_id", json!({"foo": "local"}))?;
+        assert_eq!(
+            api::get(&tx, "ext_id", json!(null))?,
+            json!({"foo": "local"})
+        );
+        // data should exist locally with a change recorded.
+        assert_eq!(
+            get_local_item(&tx),
+            Some(LocalItem {
+                data: DataState::Exists(map!({"foo": "local"})),
+                sync_change_counter: 1
+            })
+        );
+        do_apply_action(
+            &tx,
+            IncomingAction::Merge {
+                data: map!({"foo": "remote"}),
+            },
+        );
+        assert_eq!(
+            get_local_item(&tx),
+            Some(LocalItem {
+                data: DataState::Exists(map!({"foo": "remote"})),
+                sync_change_counter: 2
+            })
+        );
+        tx.rollback()?;
+
+        // Same - data stays the same but is marked not dirty.
+        let tx = conn.transaction().expect("transaciton should work");
+        api::set(&tx, "ext_id", json!({"foo": "local"}))?;
+        assert_eq!(
+            api::get(&tx, "ext_id", json!(null))?,
+            json!({"foo": "local"})
+        );
+        // data should exist locally with a change recorded.
+        assert_eq!(
+            get_local_item(&tx),
+            Some(LocalItem {
+                data: DataState::Exists(map!({"foo": "local"})),
+                sync_change_counter: 1
+            })
+        );
+        do_apply_action(&tx, IncomingAction::Same);
+        assert_eq!(
+            get_local_item(&tx),
+            Some(LocalItem {
+                data: DataState::Exists(map!({"foo": "local"})),
+                sync_change_counter: 0
+            })
+        );
+        tx.rollback()?;
+
+        Ok(())
+    }
 }

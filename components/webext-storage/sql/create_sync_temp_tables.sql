@@ -3,10 +3,10 @@
 -- file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 -- Temp tables used by Sync.
--- Note that this is execute both before and after a sync.
+-- Note that this is executed both before and after a sync.
 
 CREATE TEMP TABLE IF NOT EXISTS storage_sync_staging (
-    guid TEXT PRIMARY KEY,
+    guid TEXT NOT NULL PRIMARY KEY,
 
     /* The extension_id is explicitly not the GUID used on the server.
        It can't be  a regular foreign-key relationship back to storage_sync_data
@@ -17,6 +17,18 @@ CREATE TEMP TABLE IF NOT EXISTS storage_sync_staging (
 
     /* The JSON payload. We *do* allow NULL here - it means "deleted" */
     data TEXT
-) WITHOUT ROWID;
+);
 
 DELETE FROM temp.storage_sync_staging;
+
+-- We store metadata about items we are uploading in this temp table. After
+-- we get told the upload was successful we use this to update the local
+-- tables.
+CREATE TEMP TABLE IF NOT EXISTS storage_sync_outgoing_staging (
+    guid TEXT NOT NULL PRIMARY KEY DEFAULT(generate_guid()),
+    ext_id TEXT NOT NULL UNIQUE,
+    data TEXT,
+    sync_change_counter INTEGER NOT NULL
+);
+
+DELETE FROM temp.storage_sync_outgoing_staging;

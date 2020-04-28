@@ -8,8 +8,9 @@
 
 use crate::api::{clear, get, set};
 use crate::error::*;
+use crate::schema::create_empty_sync_temp_tables;
 use crate::sync::incoming::{apply_actions, get_incoming, plan_incoming, stage_incoming};
-use crate::sync::outgoing::{get_outgoing, record_uploaded, OutgoingInfo};
+use crate::sync::outgoing::{get_and_record_outgoing, record_uploaded};
 use crate::sync::test::new_syncable_mem_db;
 use crate::sync::ServerPayload;
 use interrupt_support::NeverInterrupts;
@@ -21,7 +22,7 @@ use sync_guid::Guid;
 
 // Here we try and simulate everything done by a "full sync", just minus the
 // engine. Returns the records we uploaded.
-fn do_sync(tx: &Transaction<'_>, incoming_bsos: Vec<ServerPayload>) -> Result<Vec<OutgoingInfo>> {
+fn do_sync(tx: &Transaction<'_>, incoming_bsos: Vec<ServerPayload>) -> Result<Vec<ServerPayload>> {
     // First we stage the incoming in the temp tables.
     stage_incoming(tx, incoming_bsos, &NeverInterrupts)?;
     // Then we process them getting a Vec of (item, state), which we turn into
@@ -32,8 +33,17 @@ fn do_sync(tx: &Transaction<'_>, incoming_bsos: Vec<ServerPayload>) -> Result<Ve
         .collect();
     apply_actions(&tx, actions, &NeverInterrupts)?;
     // So we've done incoming - do outgoing.
-    let outgoing = get_outgoing(tx, &NeverInterrupts)?;
-    record_uploaded(tx, &outgoing, &NeverInterrupts)?;
+    let outgoing = get_and_record_outgoing(tx, &NeverInterrupts)?;
+    record_uploaded(
+        tx,
+        outgoing
+            .iter()
+            .map(|p| p.guid.clone())
+            .collect::<Vec<Guid>>()
+            .as_slice(),
+        &NeverInterrupts,
+    )?;
+    create_empty_sync_temp_tables(tx)?;
     Ok(outgoing)
 }
 

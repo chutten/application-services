@@ -193,17 +193,27 @@ pub fn plan_incoming(s: IncomingState) -> IncomingAction {
         } => {
             // All records exist - but do they all have data?
             match (incoming, local, mirror) {
-                (DataState::Exists(id), DataState::Exists(ld), DataState::Exists(md)) => {
+                (
+                    DataState::Exists(incoming_data),
+                    DataState::Exists(local_data),
+                    DataState::Exists(mirror_data),
+                ) => {
                     // all records have data - 3-way merge.
-                    merge(id, ld, Some(md))
+                    merge(incoming_data, local_data, Some(mirror_data))
                 }
-                (DataState::Exists(id), DataState::Exists(ld), DataState::Deleted) => {
+                (
+                    DataState::Exists(incoming_data),
+                    DataState::Exists(local_data),
+                    DataState::Deleted,
+                ) => {
                     // No parent, so first time seeing this remotely - 2-way merge
-                    merge(id, ld, None)
+                    merge(incoming_data, local_data, None)
                 }
-                (DataState::Exists(id), DataState::Deleted, _) => {
+                (DataState::Exists(incoming_data), DataState::Deleted, _) => {
                     // Incoming data, removed locally. Server wins.
-                    IncomingAction::TakeRemote { data: id }
+                    IncomingAction::TakeRemote {
+                        data: incoming_data,
+                    }
                 }
                 (DataState::Deleted, _, _) => {
                     // Deleted remotely. Server wins.
@@ -219,20 +229,20 @@ pub fn plan_incoming(s: IncomingState) -> IncomingAction {
             // mirror record. This means some other device has synced this for
             // the first time and we are yet to do the same.
             match (incoming, local) {
-                (DataState::Exists(id), DataState::Exists(ld)) => {
+                (DataState::Exists(incoming_data), DataState::Exists(local_data)) => {
                     // This means the extension exists locally and remotely
                     // but this is the first time we've synced it. That's no problem, it's
                     // just a 2-way merge...
-                    merge(id, ld, None)
+                    merge(incoming_data, local_data, None)
                 }
                 (DataState::Exists(_), DataState::Deleted) => {
                     // We've data locally, but there's an incoming deletion.
                     // Remote wins.
                     IncomingAction::DeleteLocally
                 }
-                (DataState::Deleted, DataState::Exists(data)) => {
+                (DataState::Deleted, DataState::Exists(local_data)) => {
                     // No data locally, but some is incoming - take it.
-                    IncomingAction::TakeRemote { data }
+                    IncomingAction::TakeRemote { data: local_data }
                 }
                 (DataState::Deleted, DataState::Deleted) => {
                     // Nothing anywhere - odd, but OK.
@@ -326,8 +336,9 @@ mod tests {
 
     // select simple int
     fn ssi(conn: &Connection, stmt: &str) -> u32 {
-        conn.query_row_and_then(stmt, rusqlite::NO_PARAMS, |row| row.get::<_, u32>(0))
+        conn.try_query_one(stmt, &[], true)
             .expect("must work")
+            .unwrap_or_default()
     }
 
     fn array_to_incoming(mut array: Value) -> Vec<ServerPayload> {

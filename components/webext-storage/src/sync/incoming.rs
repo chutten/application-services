@@ -294,7 +294,7 @@ pub fn apply_actions(
                     "UPDATE storage_sync_data SET data = :data, sync_change_counter = 0 WHERE ext_id = :ext_id",
                     &[
                         (":ext_id", &item.ext_id),
-                        (":data", &serde_json::Value::Object(data).to_string()),
+                        (":data", &serde_json::Value::Object(data)),
                     ]
                 )?;
             }
@@ -306,7 +306,7 @@ pub fn apply_actions(
                     "UPDATE storage_sync_data SET data = :data, sync_change_counter = sync_change_counter + 1 WHERE ext_id = :ext_id",
                     &[
                         (":ext_id", &item.ext_id),
-                        (":data", &serde_json::Value::Object(data).to_string()),
+                        (":data", &serde_json::Value::Object(data)),
                     ]
                 )?;
             }

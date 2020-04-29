@@ -2163,6 +2163,7 @@ dependencies = [
  "libsqlite3-sys",
  "lru-cache",
  "memchr",
+ "serde_json",
  "time",
 ]
 

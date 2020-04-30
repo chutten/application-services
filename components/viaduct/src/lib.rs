@@ -5,7 +5,6 @@
 #![allow(unknown_lints)]
 #![warn(rust_2018_idioms)]
 
-use url::Url;
 #[macro_use]
 mod headers;
 
@@ -13,6 +12,7 @@ mod backend;
 pub mod error;
 pub mod settings;
 pub use error::*;
+pub use url::Url;
 
 pub use backend::{note_backend, set_backend, Backend};
 pub use headers::{consts as header_names, Header, HeaderName, Headers, InvalidHeaderName};
